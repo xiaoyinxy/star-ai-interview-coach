@@ -1,0 +1,66 @@
+[
+  {
+    "id": 51,
+    "query": "因为用户老是输入一些无关的闲聊，导致模型 token 消耗特别大",
+    "expected": "2",
+    "predicted": "5",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 69,
+    "query": "我在Prompt里加了强约束，不许模型输出Markdown之外的文字",
+    "expected": "2",
+    "predicted": "5",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 71,
+    "query": "我们发现很多用户不会写Prompt，所以做成了模板选择器",
+    "expected": "2",
+    "predicted": "1",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 72,
+    "query": "因为安全性问题，必须在本地部署小模型，不能走公有云API",
+    "expected": "2",
+    "predicted": "5",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 87,
+    "query": "你好，请问现在可以开始了吗？",
+    "expected": "4",
+    "predicted": "6",
+    "story_state": "something but not clear",
+    "last_question": ""
+  },
+  {
+    "id": 104,
+    "query": "你觉得今年AI产品经理好找工作吗？",
+    "expected": "5",
+    "predicted": "6",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 122,
+    "query": "你现在是在北京吗？",
+    "expected": "5",
+    "predicted": "6",
+    "story_state": "",
+    "last_question": "something but not clear"
+  },
+  {
+    "id": 162,
+    "query": "生成",
+    "expected": "3",
+    "predicted": "5",
+    "story_state": "",
+    "last_question": "something but not clear"
+  }
+]
