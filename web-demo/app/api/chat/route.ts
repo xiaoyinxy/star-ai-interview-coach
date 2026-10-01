@@ -21,6 +21,8 @@ export async function POST(request: Request) {
     const query = body.query;
     const conversationId = body.conversationId || "";
     const user = body.user;
+    const apiKey = body.apiKey;
+    const requestedBaseUrl = body.baseUrl || DEFAULT_DIFY_URL;
 
     if (typeof query !== "string" || !query.trim() || query.length > 4000) {
       return Response.json({ error: "请输入 1–4000 字的项目经历。" }, { status: 400 });
@@ -28,14 +30,28 @@ export async function POST(request: Request) {
     if (typeof user !== "string" || !/^web-[a-zA-Z0-9-]{8,80}$/.test(user)) {
       return Response.json({ error: "用户会话标识无效，请刷新页面重试。" }, { status: 400 });
     }
-
-    const apiKey = process.env.DIFY_API_KEY;
-    if (!apiKey) return Response.json({ error: "服务端尚未配置 Dify API Key。" }, { status: 503 });
-
-    const baseUrl = (process.env.DIFY_API_URL || DEFAULT_DIFY_URL).replace(/\/$/, "");
+    if (typeof apiKey !== "string" || apiKey.trim().length < 10 || apiKey.length > 500) {
+      return Response.json({ error: "Dify App API Key 无效，请在连接设置中检查。" }, { status: 400 });
+    }
+    if (typeof requestedBaseUrl !== "string" || requestedBaseUrl.length > 500) {
+      return Response.json({ error: "Dify API 地址无效。" }, { status: 400 });
+    }
+    let parsedBaseUrl: URL;
+    try {
+      parsedBaseUrl = new URL(requestedBaseUrl);
+    } catch {
+      return Response.json({ error: "Dify API 地址格式无效。" }, { status: 400 });
+    }
+    const hostname = parsedBaseUrl.hostname.toLowerCase();
+    const isIpAddress = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) || hostname.startsWith("[");
+    const isLocalName = hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname.endsWith(".internal");
+    if (parsedBaseUrl.protocol !== "https:" || isIpAddress || isLocalName || (parsedBaseUrl.port && parsedBaseUrl.port !== "443")) {
+      return Response.json({ error: "Dify API 地址必须是可公开访问的 HTTPS 地址。" }, { status: 400 });
+    }
+    const baseUrl = parsedBaseUrl.toString().replace(/\/$/, "");
     const upstream = await fetch(`${baseUrl}/chat-messages`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ inputs: {}, query: query.trim(), response_mode: "streaming", conversation_id: typeof conversationId === "string" ? conversationId : "", user, auto_generate_name: true }),
       signal: AbortSignal.timeout(DIFY_TIMEOUT_MS),
     });

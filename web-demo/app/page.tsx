@@ -20,6 +20,10 @@ type Conversation = {
   difyConversationId: string;
   messages: Message[];
 };
+type ProviderConfig = {
+  apiKey: string;
+  baseUrl: string;
+};
 
 const WELCOME: Message = {
   id: "welcome",
@@ -43,6 +47,8 @@ const STAR_STEPS = [
 
 const REVIEW_POINTS = ["事实优先", "单点追问", "贡献归因", "数据闭环"];
 const HISTORY_STORAGE_KEY = "star-coach-conversations-v1";
+const CONFIG_SESSION_KEY = "star-coach-dify-config-v1";
+const DEFAULT_DIFY_URL = "https://api.dify.ai/v1";
 const NEW_CONVERSATION_TITLE = "新的面试故事";
 const GENERATOR_PROMPT = "请执行 generator 意图，基于当前对话已经收集的全部项目信息，生成完整、可直接用于面试表达的 STAR_generator 结果。";
 const WELCOME_MESSAGES = [WELCOME];
@@ -103,6 +109,11 @@ export default function Home() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<"coach" | "brief">("coach");
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig>({ apiKey: "", baseUrl: DEFAULT_DIFY_URL });
+  const [configDraft, setConfigDraft] = useState<ProviderConfig>({ apiKey: "", baseUrl: DEFAULT_DIFY_URL });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [configError, setConfigError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -129,6 +140,26 @@ export default function Home() {
         localStorage.removeItem(HISTORY_STORAGE_KEY);
       } finally {
         setHistoryReady(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const stored = sessionStorage.getItem(CONFIG_SESSION_KEY);
+        const parsed = stored ? JSON.parse(stored) : null;
+        if (parsed && typeof parsed.apiKey === "string" && typeof parsed.baseUrl === "string") {
+          const restored = { apiKey: parsed.apiKey, baseUrl: parsed.baseUrl };
+          setProviderConfig(restored);
+          setConfigDraft(restored);
+        } else {
+          setSettingsOpen(true);
+        }
+      } catch {
+        sessionStorage.removeItem(CONFIG_SESSION_KEY);
+        setSettingsOpen(true);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -184,6 +215,11 @@ export default function Home() {
   ) {
     const text = query.trim();
     if (!text || isSending || !activeConversation) return;
+    if (!providerConfig.apiKey) {
+      setConfigError("请先填写 Dify App API Key。");
+      setSettingsOpen(true);
+      return;
+    }
 
     const targetConversationId = activeConversation.id;
     const displayText = options.displayText || text;
@@ -214,7 +250,13 @@ export default function Home() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: text, conversationId: activeConversation.difyConversationId, user: userId }),
+        body: JSON.stringify({
+          query: text,
+          conversationId: activeConversation.difyConversationId,
+          user: userId,
+          apiKey: providerConfig.apiKey,
+          baseUrl: providerConfig.baseUrl,
+        }),
         signal: controller.signal,
       });
 
@@ -342,6 +384,35 @@ export default function Home() {
     }
   }
 
+  function openSettings() {
+    setConfigDraft(providerConfig);
+    setConfigError("");
+    setSettingsOpen(true);
+  }
+
+  function saveSettings(event: FormEvent) {
+    event.preventDefault();
+    const apiKey = configDraft.apiKey.trim();
+    const baseUrl = configDraft.baseUrl.trim().replace(/\/$/, "");
+    if (apiKey.length < 10) {
+      setConfigError("请输入有效的 Dify App API Key。");
+      return;
+    }
+    try {
+      const url = new URL(baseUrl);
+      if (url.protocol !== "https:") throw new Error("invalid protocol");
+    } catch {
+      setConfigError("API 地址必须是有效的 HTTPS 地址。");
+      return;
+    }
+    const nextConfig = { apiKey, baseUrl };
+    sessionStorage.setItem(CONFIG_SESSION_KEY, JSON.stringify(nextConfig));
+    setProviderConfig(nextConfig);
+    setConfigDraft(nextConfig);
+    setConfigError("");
+    setSettingsOpen(false);
+  }
+
   return (
     <main className="app-shell">
       <a className="skip-link" href="#coach-workspace">跳到对话区</a>
@@ -391,8 +462,9 @@ export default function Home() {
           </nav>
 
           <div className="sidebar-status">
-            <span><i aria-hidden="true" />Dify 服务已连接</span>
-            <small>对话记录已自动保存在本机</small>
+            <span><i className={providerConfig.apiKey ? "" : "offline"} aria-hidden="true" />{providerConfig.apiKey ? "Dify 已配置" : "等待配置 Dify"}</span>
+            <small>密钥仅保存在当前浏览器会话</small>
+            <button type="button" className="settings-link" onClick={openSettings}>连接设置</button>
           </div>
         </aside>
 
@@ -404,6 +476,10 @@ export default function Home() {
               <span>{userMessages.length > 0 ? `第 ${userMessages.length} 轮 · 自动保存` : "从一段真实项目经历开始"}</span>
             </div>
             <div className="stage-actions">
+              <button type="button" className="settings-button" onClick={openSettings} aria-label="打开 Dify 连接设置">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm8.1-2.1v-2.3l-2.05-.68a7.05 7.05 0 0 0-.63-1.51l.97-1.94-1.63-1.63-1.94.97a7.05 7.05 0 0 0-1.51-.63L12.63 3h-2.3l-.68 2.05c-.53.16-1.04.37-1.51.63L6.2 4.71 4.57 6.34l.97 1.94c-.26.47-.47.98-.63 1.51l-2.05.68v2.3l2.05.68c.16.53.37 1.04.63 1.51l-.97 1.94 1.63 1.63 1.94-.97c.47.26.98.47 1.51.63l.68 2.05h2.3l.68-2.05c.53-.16 1.04-.37 1.51-.63l1.94.97 1.63-1.63-.97-1.94c.26-.47.47-.98.63-1.51l2.05-.68Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/></svg>
+                <span>设置</span>
+              </button>
               <div className="segmented" role="tablist" aria-label="视图切换">
                 <button type="button" className={view === "coach" ? "active" : ""} onClick={() => setView("coach")}>对话</button>
                 <button type="button" className={view === "brief" ? "active" : ""} onClick={() => setView("brief")}>简报</button>
@@ -483,7 +559,7 @@ export default function Home() {
                 disabled={isSending}
                 placeholder="例如：我在实习时负责过一个智能问答项目，但知识库召回率一直不理想..."
               />
-              <button type="submit" className="send-button" aria-label="发送消息" disabled={!input.trim() || isSending}>
+              <button type="submit" className="send-button" aria-label="发送消息" disabled={!input.trim() || isSending || !providerConfig.apiKey}>
                 {isSending ? "..." : "Send"}
               </button>
             </div>
@@ -560,6 +636,52 @@ export default function Home() {
           </div>
         </aside>
       </section>
+
+      {settingsOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && providerConfig.apiKey) setSettingsOpen(false);
+        }}>
+          <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">CONNECTION</p>
+                <h2 id="settings-title">连接你的 Dify 应用</h2>
+              </div>
+              {providerConfig.apiKey && <button type="button" className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭设置">×</button>}
+            </div>
+            <p className="modal-intro">填写 Dify 应用的 API 信息即可开始。密钥只保存在当前浏览器会话中，关闭浏览器后会自动清除。</p>
+            <form onSubmit={saveSettings}>
+              <label htmlFor="dify-api-key">App API Key <span>必填</span></label>
+              <div className="secret-field">
+                <input
+                  id="dify-api-key"
+                  type={showApiKey ? "text" : "password"}
+                  value={configDraft.apiKey}
+                  onChange={(event) => setConfigDraft((current) => ({ ...current, apiKey: event.target.value }))}
+                  placeholder="app-xxxxxxxxxxxxxxxx"
+                  autoComplete="off"
+                  required
+                />
+                <button type="button" onClick={() => setShowApiKey((current) => !current)}>{showApiKey ? "隐藏" : "显示"}</button>
+              </div>
+              <label htmlFor="dify-base-url">API 地址 <span>必填</span></label>
+              <input
+                id="dify-base-url"
+                type="url"
+                inputMode="url"
+                value={configDraft.baseUrl}
+                onChange={(event) => setConfigDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                placeholder={DEFAULT_DIFY_URL}
+                required
+              />
+              <p className="field-help">Dify 云服务默认使用 https://api.dify.ai/v1；自托管服务请填写对应的 HTTPS 地址。</p>
+              {configError && <p className="config-error" role="alert">{configError}</p>}
+              <button type="submit" className="save-settings-button">保存并开始使用</button>
+            </form>
+            <p className="privacy-note"><strong>隐私提示：</strong>你的 Key 会随请求经过本站后端转发给 Dify，但不会写入本站数据库、代码仓库或 Vercel 环境变量。</p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
