@@ -1115,6 +1115,45 @@ textarea:focus-visible,
 .settings-modal label:not(:first-child) { margin-top: 6px; }
 .settings-modal label span { margin-left: 5px; color: #c2410c; font-size: 10px; }
 
+.provider-picker {
+  margin: 0 0 4px;
+  border: 0;
+  padding: 0;
+}
+
+.provider-picker legend {
+  margin-bottom: 9px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.provider-picker > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.provider-picker button {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: white;
+  padding: 11px 12px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.provider-picker button:hover { border-color: #94a3b8; background: var(--surface-soft); }
+.provider-picker button:focus-visible { outline: 3px solid rgba(37, 99, 235, 0.22); outline-offset: 2px; }
+.provider-picker button.active { border-color: var(--blue); background: #eff6ff; box-shadow: inset 0 0 0 1px var(--blue); }
+.provider-picker strong { font-size: 13px; }
+.provider-picker small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+
 .settings-modal input {
   width: 100%;
   height: 46px;

@@ -21,8 +21,10 @@ type Conversation = {
   messages: Message[];
 };
 type ProviderConfig = {
+  provider: "dify" | "siliconflow";
   apiKey: string;
   baseUrl: string;
+  model: string;
 };
 
 const WELCOME: Message = {
@@ -47,8 +49,11 @@ const STAR_STEPS = [
 
 const REVIEW_POINTS = ["事实优先", "单点追问", "贡献归因", "数据闭环"];
 const HISTORY_STORAGE_KEY = "star-coach-conversations-v1";
-const CONFIG_SESSION_KEY = "star-coach-dify-config-v1";
+const CONFIG_SESSION_KEY = "star-coach-provider-config-v2";
+const LEGACY_CONFIG_SESSION_KEY = "star-coach-dify-config-v1";
 const DEFAULT_DIFY_URL = "https://api.dify.ai/v1";
+const DEFAULT_SILICONFLOW_URL = "https://api.siliconflow.cn/v1";
+const DEFAULT_SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3.2";
 const NEW_CONVERSATION_TITLE = "新的面试故事";
 const GENERATOR_PROMPT = "请执行 generator 意图，基于当前对话已经收集的全部项目信息，生成完整、可直接用于面试表达的 STAR_generator 结果。";
 const WELCOME_MESSAGES = [WELCOME];
@@ -109,8 +114,9 @@ export default function Home() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<"coach" | "brief">("coach");
-  const [providerConfig, setProviderConfig] = useState<ProviderConfig>({ apiKey: "", baseUrl: DEFAULT_DIFY_URL });
-  const [configDraft, setConfigDraft] = useState<ProviderConfig>({ apiKey: "", baseUrl: DEFAULT_DIFY_URL });
+  const emptyConfig: ProviderConfig = { provider: "siliconflow", apiKey: "", baseUrl: DEFAULT_SILICONFLOW_URL, model: DEFAULT_SILICONFLOW_MODEL };
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig>(emptyConfig);
+  const [configDraft, setConfigDraft] = useState<ProviderConfig>(emptyConfig);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [configError, setConfigError] = useState("");
@@ -148,10 +154,16 @@ export default function Home() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        const stored = sessionStorage.getItem(CONFIG_SESSION_KEY);
+        const stored = sessionStorage.getItem(CONFIG_SESSION_KEY) || sessionStorage.getItem(LEGACY_CONFIG_SESSION_KEY);
         const parsed = stored ? JSON.parse(stored) : null;
         if (parsed && typeof parsed.apiKey === "string" && typeof parsed.baseUrl === "string") {
-          const restored = { apiKey: parsed.apiKey, baseUrl: parsed.baseUrl };
+          const provider = parsed.provider === "siliconflow" ? "siliconflow" : "dify";
+          const restored: ProviderConfig = {
+            provider,
+            apiKey: parsed.apiKey,
+            baseUrl: parsed.baseUrl,
+            model: typeof parsed.model === "string" ? parsed.model : DEFAULT_SILICONFLOW_MODEL,
+          };
           setProviderConfig(restored);
           setConfigDraft(restored);
         } else {
@@ -159,6 +171,7 @@ export default function Home() {
         }
       } catch {
         sessionStorage.removeItem(CONFIG_SESSION_KEY);
+        sessionStorage.removeItem(LEGACY_CONFIG_SESSION_KEY);
         setSettingsOpen(true);
       }
     }, 0);
@@ -216,7 +229,7 @@ export default function Home() {
     const text = query.trim();
     if (!text || isSending || !activeConversation) return;
     if (!providerConfig.apiKey) {
-      setConfigError("请先填写 Dify App API Key。");
+      setConfigError(`请先填写${providerConfig.provider === "siliconflow" ? "硅基流动" : " Dify App"} API Key。`);
       setSettingsOpen(true);
       return;
     }
@@ -252,10 +265,15 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: text,
+          provider: providerConfig.provider,
           conversationId: activeConversation.difyConversationId,
           user: userId,
           apiKey: providerConfig.apiKey,
           baseUrl: providerConfig.baseUrl,
+          model: providerConfig.model,
+          history: activeConversation.messages
+            .filter((message) => message.id !== "welcome" && !message.pending)
+            .map(({ role, content }) => ({ role, content })),
         }),
         signal: controller.signal,
       });
@@ -294,7 +312,7 @@ export default function Home() {
               current.map((item) => (item.id === assistantId ? { ...item, content: visibleAnswer, pending: true } : item)),
             );
           }
-          if (data.event === "error") streamError = data.message || "Dify 返回了异常。";
+          if (data.event === "error") streamError = data.message || "模型服务返回了异常。";
         }
       }
 
@@ -390,12 +408,37 @@ export default function Home() {
     setSettingsOpen(true);
   }
 
+  function chooseProvider(provider: ProviderConfig["provider"]) {
+    setConfigDraft((current) => ({
+      ...current,
+      provider,
+      apiKey: current.provider === provider ? current.apiKey : "",
+      baseUrl: provider === "siliconflow" ? DEFAULT_SILICONFLOW_URL : DEFAULT_DIFY_URL,
+      model: provider === "siliconflow" ? (current.model || DEFAULT_SILICONFLOW_MODEL) : "",
+    }));
+    setConfigError("");
+  }
+
   function saveSettings(event: FormEvent) {
     event.preventDefault();
     const apiKey = configDraft.apiKey.trim();
     const baseUrl = configDraft.baseUrl.trim().replace(/\/$/, "");
+    const providerName = configDraft.provider === "siliconflow" ? "硅基流动" : "Dify";
     if (apiKey.length < 10) {
-      setConfigError("请输入有效的 Dify App API Key。");
+      setConfigError(`请输入有效的${providerName} API Key。`);
+      return;
+    }
+    if (configDraft.provider === "siliconflow" && !apiKey.startsWith("sk-")) {
+      setConfigError("硅基流动 API Key 通常以 sk- 开头，请确认没有填入 Dify Key。");
+      return;
+    }
+    if (configDraft.provider === "dify" && !apiKey.startsWith("app-")) {
+      setConfigError("Dify App API Key 通常以 app- 开头，请确认没有填入硅基流动 Key。");
+      return;
+    }
+    const model = configDraft.model.trim();
+    if (configDraft.provider === "siliconflow" && !model) {
+      setConfigError("请填写硅基流动模型 ID。");
       return;
     }
     try {
@@ -405,8 +448,12 @@ export default function Home() {
       setConfigError("API 地址必须是有效的 HTTPS 地址。");
       return;
     }
-    const nextConfig = { apiKey, baseUrl };
+    const nextConfig: ProviderConfig = { ...configDraft, apiKey, baseUrl, model };
     sessionStorage.setItem(CONFIG_SESSION_KEY, JSON.stringify(nextConfig));
+    sessionStorage.removeItem(LEGACY_CONFIG_SESSION_KEY);
+    if (providerConfig.provider !== nextConfig.provider) {
+      setConversations((current) => current.map((conversation) => ({ ...conversation, difyConversationId: "" })));
+    }
     setProviderConfig(nextConfig);
     setConfigDraft(nextConfig);
     setConfigError("");
@@ -462,7 +509,7 @@ export default function Home() {
           </nav>
 
           <div className="sidebar-status">
-            <span><i className={providerConfig.apiKey ? "" : "offline"} aria-hidden="true" />{providerConfig.apiKey ? "Dify 已配置" : "等待配置 Dify"}</span>
+            <span><i className={providerConfig.apiKey ? "" : "offline"} aria-hidden="true" />{providerConfig.apiKey ? `${providerConfig.provider === "siliconflow" ? "硅基流动" : "Dify"} 已配置` : "等待配置模型"}</span>
             <small>密钥仅保存在当前浏览器会话</small>
             <button type="button" className="settings-link" onClick={openSettings}>连接设置</button>
           </div>
@@ -476,7 +523,7 @@ export default function Home() {
               <span>{userMessages.length > 0 ? `第 ${userMessages.length} 轮 · 自动保存` : "从一段真实项目经历开始"}</span>
             </div>
             <div className="stage-actions">
-              <button type="button" className="settings-button" onClick={openSettings} aria-label="打开 Dify 连接设置">
+              <button type="button" className="settings-button" onClick={openSettings} aria-label="打开模型连接设置">
                 <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm8.1-2.1v-2.3l-2.05-.68a7.05 7.05 0 0 0-.63-1.51l.97-1.94-1.63-1.63-1.94.97a7.05 7.05 0 0 0-1.51-.63L12.63 3h-2.3l-.68 2.05c-.53.16-1.04.37-1.51.63L6.2 4.71 4.57 6.34l.97 1.94c-.26.47-.47.98-.63 1.51l-2.05.68v2.3l2.05.68c.16.53.37 1.04.63 1.51l-.97 1.94 1.63 1.63 1.94-.97c.47.26.98.47 1.51.63l.68 2.05h2.3l.68-2.05c.53-.16 1.04-.37 1.51-.63l1.94.97 1.63-1.63-.97-1.94c.26-.47.47-.98.63-1.51l2.05-.68Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/></svg>
                 <span>设置</span>
               </button>
@@ -645,40 +692,65 @@ export default function Home() {
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">CONNECTION</p>
-                <h2 id="settings-title">连接你的 Dify 应用</h2>
+                <h2 id="settings-title">连接你的 AI 模型</h2>
               </div>
               {providerConfig.apiKey && <button type="button" className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭设置">×</button>}
             </div>
-            <p className="modal-intro">填写 Dify 应用的 API 信息即可开始。密钥只保存在当前浏览器会话中，关闭浏览器后会自动清除。</p>
+            <p className="modal-intro">选择服务商并填写自己的 API 信息。密钥只保存在当前浏览器会话中，关闭浏览器后会自动清除。</p>
             <form onSubmit={saveSettings}>
-              <label htmlFor="dify-api-key">App API Key <span>必填</span></label>
+              <fieldset className="provider-picker">
+                <legend>服务商</legend>
+                <div>
+                  <button type="button" className={configDraft.provider === "siliconflow" ? "active" : ""} aria-pressed={configDraft.provider === "siliconflow"} onClick={() => chooseProvider("siliconflow")}>
+                    <strong>硅基流动</strong><small>sk- Key · 直接调用模型</small>
+                  </button>
+                  <button type="button" className={configDraft.provider === "dify" ? "active" : ""} aria-pressed={configDraft.provider === "dify"} onClick={() => chooseProvider("dify")}>
+                    <strong>Dify</strong><small>app- Key · 连接 Chatflow</small>
+                  </button>
+                </div>
+              </fieldset>
+              <label htmlFor="provider-api-key">{configDraft.provider === "siliconflow" ? "硅基流动 API Key" : "Dify App API Key"} <span>必填</span></label>
               <div className="secret-field">
                 <input
-                  id="dify-api-key"
+                  id="provider-api-key"
                   type={showApiKey ? "text" : "password"}
                   value={configDraft.apiKey}
                   onChange={(event) => setConfigDraft((current) => ({ ...current, apiKey: event.target.value }))}
-                  placeholder="app-xxxxxxxxxxxxxxxx"
+                  placeholder={configDraft.provider === "siliconflow" ? "sk-xxxxxxxxxxxxxxxx" : "app-xxxxxxxxxxxxxxxx"}
                   autoComplete="off"
                   required
                 />
                 <button type="button" onClick={() => setShowApiKey((current) => !current)}>{showApiKey ? "隐藏" : "显示"}</button>
               </div>
-              <label htmlFor="dify-base-url">API 地址 <span>必填</span></label>
+              {configDraft.provider === "siliconflow" && (
+                <>
+                  <label htmlFor="provider-model">模型 ID <span>必填</span></label>
+                  <input
+                    id="provider-model"
+                    value={configDraft.model}
+                    onChange={(event) => setConfigDraft((current) => ({ ...current, model: event.target.value }))}
+                    placeholder={DEFAULT_SILICONFLOW_MODEL}
+                    autoComplete="off"
+                    required
+                  />
+                  <p className="field-help">填写硅基流动模型广场中的完整模型 ID，默认使用 {DEFAULT_SILICONFLOW_MODEL}。</p>
+                </>
+              )}
+              <label htmlFor="provider-base-url">API 地址 <span>必填</span></label>
               <input
-                id="dify-base-url"
+                id="provider-base-url"
                 type="url"
                 inputMode="url"
                 value={configDraft.baseUrl}
                 onChange={(event) => setConfigDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                placeholder={DEFAULT_DIFY_URL}
+                placeholder={configDraft.provider === "siliconflow" ? DEFAULT_SILICONFLOW_URL : DEFAULT_DIFY_URL}
                 required
               />
-              <p className="field-help">Dify 云服务默认使用 https://api.dify.ai/v1；自托管服务请填写对应的 HTTPS 地址。</p>
+              <p className="field-help">{configDraft.provider === "siliconflow" ? "中国站默认使用 https://api.siliconflow.cn/v1，无需填写 /chat/completions。" : "Dify 云服务默认使用 https://api.dify.ai/v1；自托管服务请填写对应的 HTTPS 地址。"}</p>
               {configError && <p className="config-error" role="alert">{configError}</p>}
               <button type="submit" className="save-settings-button">保存并开始使用</button>
             </form>
-            <p className="privacy-note"><strong>隐私提示：</strong>你的 Key 会随请求经过本站后端转发给 Dify，但不会写入本站数据库、代码仓库或 Vercel 环境变量。</p>
+            <p className="privacy-note"><strong>隐私提示：</strong>你的 Key 会随请求经过本站后端转发给所选服务商，但不会写入本站数据库、代码仓库或 Vercel 环境变量。</p>
           </section>
         </div>
       )}
